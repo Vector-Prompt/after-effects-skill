@@ -1,0 +1,28 @@
+[මෙතැනට ඔබේ Reference Frame Screenshot එක / Design Image එක attach කරන්න]
+
+මගේ workspace එකේ ඇති After Effects skill (`SKILL.md` සහ `references/` වල ඇති සියලුම නීති — `channel-standards.md`, `pro-glass-and-3d-cards.md`, `apple-ui-patterns.md`, `3d-kinetic-and-camera.md`, `expressions-cookbook.md`) සහ `ae_templates/_channel_helpers.jsxinc` 100%ක්ම follow කරමින්, attach කර ඇති frame එකට අනුව After Effects 2026 ES3 `.jsx` animation script එකක් සාදා `H:\Youtube Channel\ae_templates\<Category>\` (උදා: `Text_Animations`, `UI_Animations`, `Glass_And_3D_Cards`, `SaaS_Explainers`, `Reels_And_Shorts`) තුළ save කරන්න:
+
+- Format & Resolution: [1920x1080 (16:9 YouTube) / 1080x1920 (9:16 Reels/Shorts)] @ 60fps
+- Background Theme: [Dark / Neon (QCA ON) හෝ Light / Studio (QCA OFF — strictly skip `QCA_Finishing`)]
+- Text & Visual Elements: [වෙනස් කළ යුතු හෝ පෙන්විය යුතු texts, colors, හෝ reference image එක අනුවම සාදන්න]
+- Background Image / Texture / Video (බැක්ග්‍රවුන්ඩ් එක සඳහා වෙනම file එකක් තියෙනවනම් path දෙන්න; නැත්නම් "නැහැ — native AE backdrop / 4-Color Gradient සාදන්න" ලෙස තබන්න):
+  - [උදා: Background -> `C:\path\to\background.png` (හෝ `.mp4` / `.jpg` — full-bleed backdrop ලෙස භාවිතා කරන්න)]
+  - [වෙනම background file එකක් නැත්නම් ඉහත line මකා "නැහැ — native AE backdrop / 4-Color Gradient සාදන්න" ලෙස තබන්න]
+- UI Elements / Product Images / Mockups (card, mockup, illustration, hero photo වැනි visual elements වෙනම images ලෙස තියෙනවනම් paths දෙන්න; නැත්නම් "නැහැ — native AE shapes වලින් සාදන්න" ලෙස තබන්න):
+  - [උදා: Element 1 -> `C:\path\to\element1.png` (මෙතැනට / Card 1 / Hero Center එකට)]
+  - [උදා: Element 2 -> `C:\path\to\mockup.png` (මෙතැනට / Right Panel එකට)]
+  - [වෙනම element images නැත්නම් ඉහත lines මකා "නැහැ — native AE shapes වලින් සාදන්න" ලෙස තබන්න]
+- Icons (අයිකන `.png`/`.svg` වෙනම තියෙනවනම් පහත පරිදි දෙන්න; නැත්නම් "නැහැ — native AE vector shapes වලින් අඳින්න" යන්න තබන්න):
+  - [උදා: Icon 1 -> `C:\path\to\icon1.png` (මෙතැනට / Card 1 ඇතුළට)]
+  - [උදා: Icon 2 -> `C:\path\to\icon2.svg` (මෙතැනට / Header එකට)]
+  - [අයිකන නැත්නම් ඉහත lines මකා "නැහැ — native AE vector shapes වලින් අඳින්න" ලෙස තබන්න]
+- Voiceover Duration & Markers: [උදා: ~10.0s (Main_Voiceover_Sync), scene beats අනුව Layer Markers දමන්න]
+- Output File Name: [Script_Name_Sample.jsx]
+
+වැදගත් (Mandatory Technical & Quality Rules):
+1. Architecture & Sync: `//@include "../_channel_helpers.jsxinc"` භාවිතා කර, සියලු animation `Anim_PreComp` තුළ සාදා `Main_Voiceover_Sync` වෙත දමා `setupVoiceoverMarkers()` මඟින් Voiceover-ready markers wire කරන්න. ඉහත Background / Elements / Icons සඳහා files දී ඇත්නම් `importExternalAsset()` හරහා ඒවා නිවැරදිව import කර bind කරන්න.
+2. Symmetric Animate-In & Animate-Out: සෑම element එකකටම Animate-In වගේම `preDur` අවසන් වීමට පෙර smooth Kinetic Animate-Out (`addKineticOutro()` — `valueAtTime(..., true)` pre-expression read සමඟ) අනිවාර්යයෙන් එක් කරන්න.
+3. Realistic Physics & Motion Blur: Asymmetric Speed-Graph curves (`setSmoothCurve(prop, 88–90, 16–18)`), `bounceExpr()`, Squash & Stretch, සහ smooth living float (`Math.sin`/`noise`) යොදන්න. සෑම animated shape, text, icon, matte, සහ precomp layer එකකම `.motionBlur = true` සමඟ `shutterAngle = 360–540` enable කරන්න.
+4. Typography & Cursive Rule: Display/UI text සඳහා `Bricolage Grotesque` / `Recursive` භාවිතා කරන්න. Screenshot එකේ **cursive font** තිබේ නම් `Luxurious_Script` (`script_luxurious`), `Sacramento` (`script_sacramento`), හෝ `Alex_Brush` (`script_alex`) වලින් **එකක්** පමණක් තෝරාගෙන එම animation එක පුරාම එම තනි cursive font එක පමණක් යොදන්න (එකම animation එකක cursive fonts දෙකක් භාවිතා නොකරන්න).
+5. Pro Card, Glass & Glow Finish: UI cards සඳහා 4-layer frosted glass finish (`addGlassCardEffect()` — Shape-Adjustment Box Blur + corner-locked `ADBE 4ColorGradient` + rotating `CC Light Sweep` specular rim) භාවිතා කරන්න. Moving border glow සඳහා `addSmoothOrbitGlowBorder()` භාවිතා කරන්න. Child parenting පසු `Scale = [100,100]` (`3D`: `[100,100,100]`) හා `Rotation = 0` reset කර, parent Null `Scale` animation අවසානයට දමන්න.
+6. AE 26.x ES3 Strict Safety: Pure ES3 (`var`, string `+`, no `let`/`const`/`=>`/backticks/chained ternaries, no reserved words `short|int|char|byte|long|float|double|boolean`). Stroke line cap සඳහා `2` යොදන්න (`LineCapType` undefined). `safeSetExpr()` + `auditCompExpressions()` හරහා 0 expression errors confirm කර `mainComp.openInViewer()` අවසානයේ call කර, deliver කිරීමට පෙර ES3 lint check pass කර පෙන්වන්න.

@@ -1,0 +1,517 @@
+// _channel_helpers.jsxinc
+// Shared ES3-Strict ExtendScript Helper Library for ae_templates/\
+// Usage at top of any script in ae_templates/<Category>/:  //@include "../_channel_helpers.jsxinc"
+
+function rgb(r, g, b) {
+    return [r / 255, g / 255, b / 255];
+}
+
+// Supports symmetric setSmoothCurve(prop, 86) OR asymmetric Speed-Graph ease setSmoothCurve(prop, 88, 18)
+function setSmoothCurve(prop, inInf, outInf) {
+    if (!prop || prop.numKeys < 1) return;
+    var iInf    = (typeof inInf === "number") ? inInf : 85;
+    var oInf    = (typeof outInf === "number") ? outInf : iInf;
+    var easeIn  = new KeyframeEase(0, iInf);
+    var easeOut = new KeyframeEase(0, oInf);
+    var pType   = prop.propertyValueType;
+    var k;
+    for (k = 1; k <= prop.numKeys; k++) {
+        try {
+            if (pType === PropertyValueType.ThreeD || pType === PropertyValueType.TwoD) {
+                if (prop.value instanceof Array && prop.value.length === 3) {
+                    prop.setTemporalEaseAtKey(k, [easeIn, easeIn, easeIn], [easeOut, easeOut, easeOut]);
+                } else if (prop.value instanceof Array && prop.value.length === 2) {
+                    prop.setTemporalEaseAtKey(k, [easeIn, easeIn], [easeOut, easeOut]);
+                } else {
+                    prop.setTemporalEaseAtKey(k, [easeIn], [easeOut]);
+                }
+            } else {
+                prop.setTemporalEaseAtKey(k, [easeIn], [easeOut]);
+            }
+            if (k > 1 && k < prop.numKeys) {
+                try { prop.setTemporalContinuousAtKey(k, true); } catch (ec) {}
+            }
+        } catch (e) {
+            // AE 26.x easeDimensions can differ from value length (e.g. 2D Scale=3, Ellipse=2, Position=1); probe 1..4 safely!
+            var dims;
+            for (dims = 1; dims <= 4; dims++) {
+                try {
+                    var arrIn = [], arrOut = [], d;
+                    for (d = 0; d < dims; d++) { arrIn.push(easeIn); arrOut.push(easeOut); }
+                    prop.setTemporalEaseAtKey(k, arrIn, arrOut);
+                    break;
+                } catch (e2) {}
+            }
+        }
+    }
+}
+
+// Safe expression assignment with forced evaluation & compile error check (aedev best practice)
+function safeSetExpr(prop, exprStr) {
+    if (!prop || !prop.canSetExpression) return "Not expressionable";
+    prop.expression = exprStr;
+    try { prop.valueAtTime(0, false); } catch (e) {}
+    return prop.expressionError || "";
+}
+
+// Audits all expressionable properties in a comp for silent yellow-banner expression errors
+function auditCompExpressions(comp) {
+    if (!comp) return [];
+    var errs = [];
+    function walk(grp, path) {
+        try {
+            var n = grp.numProperties;
+            var idx;
+            for (idx = 1; idx <= n; idx++) {
+                try {
+                    var p = grp.property(idx);
+                    if (!p) continue;
+                    if (p.propertyType === PropertyType.PROPERTY) {
+                        if (p.canSetExpression && p.expression !== "") {
+                            try { p.valueAtTime(0, false); } catch (ev) {}
+                            if (p.expressionError && p.expressionError !== "") {
+                                errs.push(path + " > " + p.name + ": " + p.expressionError);
+                            }
+                        }
+                    } else if (p.numProperties && p.numProperties > 0) {
+                        walk(p, path + " > " + p.name);
+                    }
+                } catch (eProp) {}
+            }
+        } catch (eGrp) {}
+    }
+    var li;
+    for (li = 1; li <= comp.numLayers; li++) {
+        var lyr = comp.layer(li);
+        walk(lyr, lyr.name);
+    }
+    return errs;
+}
+
+function bounceExpr(amp, freq, decay) {
+    return [
+        "var n = 0;",
+        "if (numKeys > 0) { n = nearestKey(time).index; if (key(n).time > time) n--; }",
+        "if (n == 0) { value; } else {",
+        "  var t = time - key(n).time;",
+        "  var v = velocityAtTime(key(n).time - thisComp.frameDuration / 10);",
+        "  value + v * " + amp + " * Math.sin(" + freq + " * t * 2 * Math.PI) / Math.exp(" + decay + " * t);",
+        "}"
+    ].join("\n");
+}
+
+function safeAddEffect(layer, matchName) {
+    try { return layer.property("ADBE Effect Parade").addProperty(matchName); } catch (e) { return null; }
+}
+
+// Deep Glow 2 (PEDG2) with native ADBE Glo2 fallback
+function addGlow(layer, thresh, radius, intensity) {
+    var dg = safeAddEffect(layer, "PEDG2");
+    if (dg) {
+        try { dg.property("Exposure").setValue(Math.min(1.1, intensity)); } catch (e1) {}
+        try { dg.property("Radius").setValue(radius * 4); } catch (e2) {}
+        try { dg.property("Threshold").setValue(thresh); } catch (e3) {}
+        return dg;
+    }
+    var g = safeAddEffect(layer, "ADBE Glo2");
+    if (g) {
+        try { g.property("ADBE Glo2-0002").setValue(thresh); } catch (e1) {}
+        try { g.property("ADBE Glo2-0003").setValue(radius); } catch (e2) {}
+        try { g.property("ADBE Glo2-0004").setValue(intensity); } catch (e3) {}
+    }
+    return g;
+}
+
+// Channel Font Standard: Bricolage Grotesque primary + Recursive fallbacks + Single-Choice Cursive Fonts
+function applyChannelFont(td, role) {
+    var fonts = {
+        headline800:       ["BricolageGrotesque-ExtraBold", "BricolageGrotesque-Bold", "Bricolage Grotesque ExtraBold", "Recursive-ExtraBold", "Inter-Black", "SegoeUI-Black"],
+        sub600:            ["BricolageGrotesque-SemiBold", "BricolageGrotesque-Medium", "Bricolage Grotesque SemiBold", "Recursive-SemiBold", "Inter-Bold", "SegoeUI-Bold"],
+        body500:           ["BricolageGrotesque-Medium", "BricolageGrotesque-Regular", "Bricolage Grotesque Medium", "Recursive-Medium", "Inter-Medium", "SegoeUI"],
+        script_luxurious:  ["LuxuriousScript-Regular", "Luxurious Script"],
+        script_sacramento: ["Sacramento-Regular", "Sacramento"],
+        script_alex:       ["AlexBrush-Regular", "Alex Brush"]
+    };
+    var list = fonts[role] || fonts["body500"];
+    var i;
+    for (i = 0; i < list.length; i++) {
+        try { td.font = list[i]; return; } catch (e) {}
+    }
+}
+
+// Safely import external Background / UI Element / Icon image or video into an AE project folder
+function importExternalAsset(proj, assetPath, targetFolder) {
+    if (!proj || !assetPath) return null;
+    try {
+        var f = new File(assetPath);
+        if (!f.exists) return null;
+        var item = proj.importFile(new ImportOptions(f));
+        if (item && targetFolder) item.parentFolder = targetFolder;
+        return item;
+    } catch (e) {
+        return null;
+    }
+}
+
+// QCA Finishing Adjustment Layer — ONLY for dark/neon scenes (skipped on light/cream backgrounds to avoid RGB text fringe)
+function addQCAFinishing(comp, isDarkScene) {
+    if (!isDarkScene) return null;
+    var qcaAdj = comp.layers.addSolid([0, 0, 0], "QCA_Finishing", comp.width, comp.height, 1.0);
+    qcaAdj.adjustmentLayer = true;
+    var qcaFx = safeAddEffect(qcaAdj, "PEQCAGL");
+    if (!qcaFx) {
+        var scR = safeAddEffect(qcaAdj, "ADBE Shift Channels");
+        if (scR) { try { scR.property("ADBE Shift Channels-0001").setValue(1); } catch (e) {} }
+    }
+    qcaAdj.moveToBeginning();
+    return qcaAdj;
+}
+
+function createRectMatte(comp, name, w, h, is3D) {
+    var matte = comp.layers.addShape();
+    matte.name = name;
+    var grp = matte.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+    grp.name = "MatteRect";
+    var vecs = grp.property("ADBE Vectors Group");
+    vecs.addProperty("ADBE Vector Shape - Rect");
+    vecs.addProperty("ADBE Vector Graphic - Fill");
+
+    var rectShape = grp.property("ADBE Vectors Group").property(1);
+    rectShape.property("ADBE Vector Rect Size").setValue([w, h]);
+    rectShape.property("ADBE Vector Rect Position").setValue([0, 0]);
+
+    var fillProp = grp.property("ADBE Vectors Group").property(2);
+    fillProp.property("ADBE Vector Fill Color").setValue([1, 1, 1, 1]);
+
+    if (is3D) matte.threeDLayer = true;
+    return matte;
+}
+
+// Voiceover-Ready Marker-Driven Time Remap Rig
+// markerEvents = [ { label: "01_Headline", srcTime: 0.0, compTime: 0.2 }, ... ]
+function setupVoiceoverMarkers(mainLayer, mainCompDur, markerEvents) {
+    if (!mainLayer || !markerEvents || markerEvents.length < 2) return;
+    mainLayer.timeRemapEnabled = true;
+    mainLayer.outPoint = mainCompDur;
+
+    var mProp = mainLayer.property("ADBE Marker");
+    var srcArr = [];
+    var i;
+    for (i = 0; i < markerEvents.length; i++) {
+        var ev = markerEvents[i];
+        var mv = new MarkerValue(ev.label);
+        mProp.setValueAtTime(ev.compTime, mv);
+        srcArr.push(ev.srcTime);
+    }
+
+    var tr = mainLayer.property("ADBE Time Remapping");
+    tr.expression = [
+        "var src = [" + srcArr.join(", ") + "];",
+        "var m = thisLayer.marker;",
+        "var n = m.numKeys;",
+        "if (n < 2) {",
+        "  value;",
+        "} else if (time <= m.key(1).time) {",
+        "  src[0];",
+        "} else if (time >= m.key(n).time) {",
+        "  src[Math.min(n - 1, src.length - 1)];",
+        "} else {",
+        "  var k = 1;",
+        "  while (k < n && time > m.key(k + 1).time) { k++; }",
+        "  var s0 = src[Math.min(k - 1, src.length - 1)];",
+        "  var s1 = src[Math.min(k, src.length - 1)];",
+        "  linear(time, m.key(k).time, m.key(k + 1).time, s0, s1);",
+        "}"
+    ].join("\n");
+}
+
+// Silky-smooth, zero-flicker Apple-Intelligence-style rotating color-shifting border glow
+// Uses Set Matte -> PEDG2 Deep Glow 2 (Threshold = 0) on a comp-sized Solid so the exponential light halo radiates freely!
+function addSmoothOrbitGlowBorder(comp, name, parentPill, w, h, roundness, strokeW, col1, col2, col3, col4, speed) {
+    var spd = speed || 1.3;
+    var rx = Math.max(220, w * 0.48);
+    var ry = Math.max(90, h * 0.65);
+
+    // 1. Stroke-only matte linked to parentPill's Rect Size & Roundness
+    var matte = comp.layers.addShape();
+    matte.name = name + "_StrokeMatte";
+    var mGrp = matte.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+    var mVecs = mGrp.property("ADBE Vectors Group");
+    mVecs.addProperty("ADBE Vector Shape - Rect");
+    mVecs.addProperty("ADBE Vector Graphic - Stroke");
+
+    var mRect = mGrp.property("ADBE Vectors Group").property(1);
+    mRect.property("ADBE Vector Rect Size").expression =
+        'thisComp.layer("' + parentPill.name + '").content(1).content(1).size;';
+    mRect.property("ADBE Vector Rect Roundness").expression =
+        'thisComp.layer("' + parentPill.name + '").content(1).content(1).roundness;';
+
+    var mSt = mGrp.property("ADBE Vectors Group").property(2);
+    mSt.property("ADBE Vector Stroke Color").setValue([1, 1, 1, 1]);
+    mSt.property("ADBE Vector Stroke Width").setValue(strokeW || 3.0);
+    matte.parent = parentPill;
+    if (parentPill.threeDLayer) {
+        matte.threeDLayer = true;
+        matte.property("Scale").setValue([100, 100, 100]);
+        matte.property("Orientation").setValue([0, 0, 0]);
+        matte.property("X Rotation").setValue(0);
+        matte.property("Y Rotation").setValue(0);
+        matte.property("Z Rotation").setValue(0);
+        matte.property("Position").setValue([0, 0, -0.5]);
+    } else {
+        matte.property("Scale").setValue([100, 100]);
+        matte.property("Rotation").setValue(0);
+        matte.property("Position").setValue([0, 0]);
+    }
+    matte.inPoint = parentPill.inPoint;
+    matte.enabled = false;
+
+    // 2. Comp-sized Solid: 4-Color Gradient -> Set Matte (clips to stroke) -> PEDG2 Deep Glow 2 (Threshold=0, unclipped halo!)
+    var rim = comp.layers.addSolid([1, 1, 1], name + "_OrbitGlow", comp.width, comp.height, 1.0);
+    rim.inPoint = parentPill.inPoint;
+
+    var grad = safeAddEffect(rim, "ADBE 4ColorGradient");
+    if (grad) {
+        try {
+            var pName = parentPill.name;
+            var cExpr = 'var c = thisComp.layer("' + pName + '").toComp([0,0]); ';
+            grad.property("ADBE 4ColorGradient-0002").setValue([col1[0], col1[1], col1[2], 1]);
+            grad.property("ADBE 4ColorGradient-0004").setValue([col2[0], col2[1], col2[2], 1]);
+            grad.property("ADBE 4ColorGradient-0006").setValue([col3[0], col3[1], col3[2], 1]);
+            grad.property("ADBE 4ColorGradient-0008").setValue([col4[0], col4[1], col4[2], 1]);
+            grad.property("ADBE 4ColorGradient-0001").expression = cExpr + "[c[0] + Math.cos(time * " + spd + ") * " + rx + ", c[1] + Math.sin(time * " + spd + ") * " + ry + "];";
+            grad.property("ADBE 4ColorGradient-0003").expression = cExpr + "[c[0] + Math.cos(time * " + spd + " + 1.57) * " + rx + ", c[1] + Math.sin(time * " + spd + " + 1.57) * " + ry + "];";
+            grad.property("ADBE 4ColorGradient-0005").expression = cExpr + "[c[0] + Math.cos(time * " + spd + " + 3.14) * " + rx + ", c[1] + Math.sin(time * " + spd + " + 3.14) * " + ry + "];";
+            grad.property("ADBE 4ColorGradient-0007").expression = cExpr + "[c[0] + Math.cos(time * " + spd + " + 4.71) * " + rx + ", c[1] + Math.sin(time * " + spd + " + 4.71) * " + ry + "];";
+        } catch (eg) {}
+    }
+
+    var sm = safeAddEffect(rim, "ADBE Set Matte3");
+    if (sm) {
+        try {
+            sm.property("ADBE Set Matte3-0001").setValue(matte.index);
+            sm.property("ADBE Set Matte3-0002").setValue(1); // Alpha
+        } catch (esm) {}
+    }
+
+    // Real exponential Deep Glow 2 with Threshold=0 (zero flicker, full outward light bloom!)
+    addGlow(rim, 0, 24, 0.68);
+    rim.blendingMode = BlendingMode.ADD;
+
+    return rim;
+}
+
+// Pro Frosted Glass + 4-Color Gradient + Specular Rim Card Stack (Zuyns + Emmanuel + Zammit)
+// 1) Shape-Adjustment Layer behind cardLayer blurs backdrop natively inside rounded corners (works in 2D & 3D!)
+// 2) cardLayer gets translucent ADBE 4ColorGradient + subtle CC Light Sweep + soft Drop Shadow
+// 3) Specular Rim stroke layer on top catches a smooth rotating CC Light Sweep reflection
+function addGlassCardEffect(comp, cardLayer, blurRadius, tintOpacity, col1, col2, col3, col4) {
+    if (!cardLayer) return null;
+
+    var is3D = cardLayer.threeDLayer;
+
+    // 1. Shape-Adjustment Frosted Blur Layer (placed directly behind cardLayer)
+    var frost = comp.layers.addShape();
+    frost.name = cardLayer.name + "_FrostBlur";
+    var fGrp = frost.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+    var fVecs = fGrp.property("ADBE Vectors Group");
+    fVecs.addProperty("ADBE Vector Shape - Rect");
+    fVecs.addProperty("ADBE Vector Graphic - Fill");
+
+    var fRect = fGrp.property("ADBE Vectors Group").property(1);
+    fRect.property("ADBE Vector Rect Size").expression =
+        'thisComp.layer("' + cardLayer.name + '").content(1).content(1).size;';
+    fRect.property("ADBE Vector Rect Roundness").expression =
+        'thisComp.layer("' + cardLayer.name + '").content(1).content(1).roundness;';
+    fGrp.property("ADBE Vectors Group").property(2).property("ADBE Vector Fill Color").setValue([1, 1, 1, 1]);
+
+    frost.adjustmentLayer = true;
+    frost.parent = cardLayer;
+    if (is3D) {
+        frost.threeDLayer = true;
+        frost.property("Scale").setValue([100, 100, 100]);
+        frost.property("Orientation").setValue([0, 0, 0]);
+        frost.property("X Rotation").setValue(0);
+        frost.property("Y Rotation").setValue(0);
+        frost.property("Z Rotation").setValue(0);
+        frost.property("Position").setValue([0, 0, 0.5]);
+    } else {
+        frost.property("Scale").setValue([100, 100]);
+        frost.property("Rotation").setValue(0);
+        frost.property("Position").setValue([0, 0]);
+    }
+    frost.inPoint = cardLayer.inPoint;
+    frost.outPoint = cardLayer.outPoint;
+    frost.moveAfter(cardLayer);
+
+    var fb = safeAddEffect(frost, "ADBE Box Blur2");
+    if (fb) {
+        try { fb.property("ADBE Box Blur2-0001").setValue(blurRadius || 30); } catch (e1) {}
+        try { fb.property("ADBE Box Blur2-0003").setValue(1); } catch (e2) {} // Repeat Edge Pixels ON
+    }
+
+    // 2. Translucent 4-Color Gradient Surface on cardLayer (lets frosted backdrop show through!)
+    var cGrad = safeAddEffect(cardLayer, "ADBE 4ColorGradient");
+    if (cGrad) {
+        try {
+            cGrad.property("ADBE 4ColorGradient-0002").setValue([col1[0], col1[1], col1[2], 1]);
+            cGrad.property("ADBE 4ColorGradient-0004").setValue([col2[0], col2[1], col2[2], 1]);
+            cGrad.property("ADBE 4ColorGradient-0006").setValue([col3[0], col3[1], col3[2], 1]);
+            cGrad.property("ADBE 4ColorGradient-0008").setValue([col4[0], col4[1], col4[2], 1]);
+            cGrad.property("ADBE 4ColorGradient-0001").expression = 'var r = sourceRectAtTime(time, false); [r.left, r.top];';
+            cGrad.property("ADBE 4ColorGradient-0003").expression = 'var r = sourceRectAtTime(time, false); [r.left + r.width, r.top];';
+            cGrad.property("ADBE 4ColorGradient-0005").expression = 'var r = sourceRectAtTime(time, false); [r.left, r.top + r.height];';
+            cGrad.property("ADBE 4ColorGradient-0007").expression = 'var r = sourceRectAtTime(time, false); [r.left + r.width, r.top + r.height];';
+            cGrad.property("ADBE 4ColorGradient-0010").setValue(25); // gentle blend
+        } catch (eg) {}
+    }
+    var tOp = tintOpacity || 26;
+    if (cardLayer.property("Opacity").numKeys === 0) {
+        cardLayer.property("Opacity").setValue(tOp);
+    }
+    // Sync backdrop FrostBlur opacity proportionally with cardLayer opacity so Animate-In/Out fades cleanly!
+    frost.property("Opacity").expression =
+        'linear(thisComp.layer("' + cardLayer.name + '").opacity, 0, ' + tOp + ', 0, 100);';
+
+    // Soft glass surface sheen + ambient drop shadow (only on 2D layers; 3D uses pre-comp/shadow layer)
+    if (!is3D) {
+        var sweep = safeAddEffect(cardLayer, "CC Light Sweep");
+        if (sweep) {
+            try {
+                sweep.property("Direction").setValue(-35);
+                sweep.property("Width").setValue(280);
+                sweep.property("Sweep Intensity").setValue(12);
+                sweep.property("Edge Intensity").setValue(2);
+                sweep.property("Center").setValueAtTime(cardLayer.inPoint + 0.3, [comp.width * 0.2, comp.height * 0.35]);
+                sweep.property("Center").setValueAtTime(cardLayer.inPoint + 2.4, [comp.width * 0.8, comp.height * 0.65]);
+            } catch (es) {}
+        }
+
+        var ds = safeAddEffect(cardLayer, "ADBE Drop Shadow");
+        if (ds) {
+            try {
+                ds.property("ADBE Drop Shadow-0002").setValue(90); // ~35% soft shadow
+                ds.property("ADBE Drop Shadow-0003").setValue(180);
+                ds.property("ADBE Drop Shadow-0004").setValue(22);
+                ds.property("ADBE Drop Shadow-0005").setValue(130);
+            } catch (ed) {}
+        }
+    }
+
+    // 3. Dedicated Specular Rim Stroke Layer with Rotating Light Reflection (Emmanuel + Zuyns finish!)
+    var rim = comp.layers.addShape();
+    rim.name = cardLayer.name + "_SpecularRim";
+    var rGrp = rim.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+    var rVecs = rGrp.property("ADBE Vectors Group");
+    rVecs.addProperty("ADBE Vector Shape - Rect");
+    rVecs.addProperty("ADBE Vector Graphic - Stroke");
+
+    var rRect = rGrp.property("ADBE Vectors Group").property(1);
+    rRect.property("ADBE Vector Rect Size").expression =
+        'thisComp.layer("' + cardLayer.name + '").content(1).content(1).size;';
+    rRect.property("ADBE Vector Rect Roundness").expression =
+        'thisComp.layer("' + cardLayer.name + '").content(1).content(1).roundness;';
+
+    var rSt = rGrp.property("ADBE Vectors Group").property(2);
+    rSt.property("ADBE Vector Stroke Color").setValue([1, 1, 1, 0.42]);
+    rSt.property("ADBE Vector Stroke Width").setValue(1.5);
+
+    rim.parent = cardLayer;
+    if (is3D) {
+        rim.threeDLayer = true;
+        rim.property("Scale").setValue([100, 100, 100]);
+        rim.property("Orientation").setValue([0, 0, 0]);
+        rim.property("X Rotation").setValue(0);
+        rim.property("Y Rotation").setValue(0);
+        rim.property("Z Rotation").setValue(0);
+        rim.property("Position").setValue([0, 0, -0.5]);
+    } else {
+        rim.property("Scale").setValue([100, 100]);
+        rim.property("Rotation").setValue(0);
+        rim.property("Position").setValue([0, 0]);
+        var rimSweep = safeAddEffect(rim, "CC Light Sweep");
+        if (rimSweep) {
+            try {
+                rimSweep.property("Width").setValue(180);
+                rimSweep.property("Sweep Intensity").setValue(45);
+                rimSweep.property("Edge Intensity").setValue(8);
+                rimSweep.property("Direction").expression = "time * 55;"; // smooth continuous rim glint
+            } catch (ers) {}
+        }
+    }
+    rim.inPoint = cardLayer.inPoint;
+    rim.outPoint = cardLayer.outPoint;
+    rim.property("Opacity").expression =
+        'linear(thisComp.layer("' + cardLayer.name + '").opacity, 0, ' + tOp + ', 0, 100);';
+    rim.moveBefore(cardLayer);
+
+    return frost;
+}
+
+// Kinetic Animate-Out helper: preserves resting state at tOutStart and eases layer out smoothly
+function addKineticOutro(layer, tOutStart, dur, dx, dy, endScalePct, easeInfluence) {
+    if (!layer) return;
+    var d = dur || 0.40;
+    var tEnd = tOutStart + d;
+    var inf = easeInfluence || 86;
+
+    if (dx || dy) {
+        var posProp = layer.property("Position");
+        // Pass true to read pre-expression raw keyframe/static coordinate (ignores continuous hover/wiggle!)
+        var basePos = posProp.valueAtTime(tOutStart, true);
+        posProp.setValueAtTime(tOutStart, basePos);
+        if (layer.threeDLayer || basePos.length === 3) {
+            posProp.setValueAtTime(tEnd, [basePos[0] + (dx || 0), basePos[1] + (dy || 0), basePos[2] || 0]);
+        } else {
+            posProp.setValueAtTime(tEnd, [basePos[0] + (dx || 0), basePos[1] + (dy || 0)]);
+        }
+        setSmoothCurve(posProp, Math.round(inf * 0.45), inf);
+    }
+
+    if (typeof endScalePct === "number") {
+        var scProp = layer.property("Scale");
+        var baseSc = scProp.valueAtTime(tOutStart, true);
+        scProp.setValueAtTime(tOutStart, baseSc);
+        if (layer.threeDLayer || baseSc.length === 3) {
+            scProp.setValueAtTime(tEnd, [endScalePct, endScalePct, endScalePct]);
+        } else {
+            scProp.setValueAtTime(tEnd, [endScalePct, endScalePct]);
+        }
+        setSmoothCurve(scProp, Math.round(inf * 0.45), inf);
+    }
+
+    var opProp = layer.property("Opacity");
+    var baseOp = opProp.valueAtTime(tOutStart, true);
+    opProp.setValueAtTime(tOutStart, baseOp);
+    opProp.setValueAtTime(tOutStart + d * 0.85, 0);
+    setSmoothCurve(opProp, Math.min(80, inf));
+}
+
+// Builds the cPBRUdTOEZ0 3D Floating UI Carousel cylindrical rig around Z = radiusZ (default 500)
+function setup3DCarouselRing(comp, cardLayers, radiusZ, stageNull, controllerName) {
+    var rZ = (typeof radiusZ === "number") ? radiusZ : 500;
+    var ctrl = comp.layers.addNull();
+    ctrl.name = controllerName || "Rotation_Controller_Null";
+    ctrl.label = 2; // Yellow label (cPBRUdTOEZ0 convention)
+    ctrl.threeDLayer = true;
+    ctrl.property("Position").setValue([comp.width / 2, comp.height / 2, rZ]);
+
+    var stepAngle = 360 / cardLayers.length;
+    var ctrlY = ctrl.property("Y Rotation");
+    var i;
+    for (i = 0; i < cardLayers.length; i++) {
+        var lyr = cardLayers[i];
+        lyr.threeDLayer = true;
+        lyr.motionBlur = true;
+        lyr.property("Position").setValue([comp.width / 2, comp.height / 2, 0]);
+        lyr.parent = ctrl;
+        if (i < cardLayers.length - 1) {
+            ctrlY.setValue(ctrlY.value + stepAngle);
+        }
+    }
+    if (stageNull) {
+        stageNull.threeDLayer = true;
+        ctrl.parent = stageNull;
+    }
+    return ctrl;
+}
